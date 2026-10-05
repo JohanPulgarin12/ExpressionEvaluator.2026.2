@@ -1,59 +1,153 @@
-﻿using System.Diagnostics.CodeAnalysis;
-using System.Reflection.Metadata;
+﻿using System.Globalization;
+using System.Text;
 
 namespace Backend;
 
 public static class ExpressionEvaluator
 {
-    public static double Evalute(string infix) => EvalutePostfix(ToPostfix(infix));
+    private static readonly char[] _operators = { '+', '-', '*', '/', '^', '(', ')' };
 
-    private static string ToPostfix(string infix)
+    public static double Evaluate(string infix)
     {
-        var posfix = string.Empty;
-        var stack = new Stack<char>();
-        foreach (var item in infix)
+        if (string.IsNullOrWhiteSpace(infix))
+            throw new Exception("Expression is empty.");
+
+        return EvaluatePostfix(ToPostfix(Tokenize(infix)));
+    }
+
+    private static List<string> Tokenize(string infix)
+    {
+        var tokens = new List<string>();
+        var number = new StringBuilder();
+
+        void FlushNumber()
         {
-            if (IsOperator(item))
+            if (number.Length > 0)
             {
-                if (item == ')')
+                tokens.Add(number.ToString());
+                number.Clear();
+            }
+        }
+
+        for (int i = 0; i < infix.Length; i++)
+        {
+            var c = infix[i];
+
+            if (char.IsWhiteSpace(c)) { FlushNumber(); continue; }
+
+            if (char.IsDigit(c) || c == '.')
+            {
+                number.Append(c);
+            }
+            else if (IsOperator(c))
+            {
+                FlushNumber();
+
+                bool unary = c == '-' &&
+                             (tokens.Count == 0 || tokens[^1] == "(" ||
+                              (IsOperatorToken(tokens[^1]) && tokens[^1] != ")"));
+
+                if (unary)
                 {
-                    var ope = stack.Pop();
-                    while(ope != '(')
+                    if (i + 1 < infix.Length && infix[i + 1] == '(')
                     {
-                        posfix += ope;
-                        ope = stack.Pop();
+                        tokens.Add("-1");
+                        tokens.Add("*");
+                    }
+                    else
+                    {
+                        number.Append('-');
                     }
                 }
                 else
                 {
-                    if (stack.Count == 0)
-                    {
-                        stack.Push(item);
-                    }
-                    else
-                    {
-                        if (PriorityInfix(item) > PriorityStack(stack.Peek()))
-                        {
-                            stack.Push(item);
-                        }
-                        else
-                        {
-                            posfix += stack.Pop();
-                            stack.Push(item);
-                        }
-                    }
+                    tokens.Add(c.ToString());
                 }
             }
             else
             {
-                posfix += item;
+                throw new Exception($"Invalid character: '{c}'.");
             }
         }
-        do
+        FlushNumber();
+        return tokens;
+    }
+
+    private static List<string> ToPostfix(List<string> tokens)
+    {
+        var postfix = new List<string>();
+        var stack = new Stack<char>();
+
+        foreach (var token in tokens)
         {
-            posfix += stack.Pop();
-        } while (stack.Count != 0);
-        return posfix;
+            if (!IsOperatorToken(token))
+            {
+                postfix.Add(token);
+                continue;
+            }
+
+            var item = token[0];
+
+            if (item == '(')
+            {
+                stack.Push(item);
+            }
+            else if (item == ')')
+            {
+                while (stack.Count > 0 && stack.Peek() != '(')
+                    postfix.Add(stack.Pop().ToString());
+
+                if (stack.Count == 0)
+                    throw new Exception("Parenthesis closing without opening.");
+
+                stack.Pop();
+            }
+            else
+            {
+                while (stack.Count > 0 && PriorityInfix(item) <= PriorityStack(stack.Peek()))
+                    postfix.Add(stack.Pop().ToString());
+
+                stack.Push(item);
+            }
+        }
+
+        while (stack.Count > 0)
+        {
+            var op = stack.Pop();
+            if (op == '(')
+                throw new Exception("Parenthesis opening without closing.");
+            postfix.Add(op.ToString());
+        }
+        return postfix;
+    }
+
+    private static double EvaluatePostfix(List<string> postfix)
+    {
+        var stack = new Stack<double>();
+
+        foreach (var token in postfix)
+        {
+            if (IsOperatorToken(token))
+            {
+                if (stack.Count < 2)
+                    throw new Exception("Missing operands in the expression.");
+
+                var ope2 = stack.Pop();
+                var ope1 = stack.Pop();
+                stack.Push(Calculate(ope1, ope2, token[0]));
+            }
+            else
+            {
+                if (!double.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+                    throw new Exception($"Invalid number: \"{token}\".");
+                stack.Push(value);
+            }
+        }
+
+        if (stack.Count != 1)
+            throw new Exception("Invalid expression.");
+
+        return stack.Pop();
     }
 
     private static int PriorityStack(char op) => op switch
@@ -78,31 +172,14 @@ public static class ExpressionEvaluator
         _ => throw new Exception("Invalid expression."),
     };
 
-    private static bool IsOperator(char item) => item == '^' || item == '*' || item == '/' || item == '+' || item == '-' || item == '(' || item == ')';
+    private static bool IsOperator(char item) => _operators.Contains(item);
 
-    private static double EvalutePostfix(string postfix)
-    {
-        var stack = new Stack<double>();
-        foreach (var item in postfix)
-        {
-            if (IsOperator(item))
-            {
-                var ope2 = stack.Pop();
-                var ope1 = stack.Pop();
-                stack.Push(Calculate(ope1, ope2, item));
-            }
-            else
-            {
-                stack.Push(char.GetNumericValue(item));
-            }
-        }
-        return stack.Pop();
-    }
+    private static bool IsOperatorToken(string token) => token.Length == 1 && IsOperator(token[0]);
 
     private static double Calculate(double ope1, double ope2, char item) => item switch
     {
         '*' => ope1 * ope2,
-        '/' => ope1 / ope2,
+        '/' => ope2 == 0 ? throw new Exception("Cannot divide by zero.") : ope1 / ope2,
         '+' => ope1 + ope2,
         '-' => ope1 - ope2,
         '^' => Math.Pow(ope1, ope2),
