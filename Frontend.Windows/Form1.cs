@@ -121,7 +121,7 @@ namespace Frontend.Windows
             try
             {
                 var result = ExpressionEvaluator.Evaluate(txtbxOperations.Text);
-                txtbxOperations.Text = result.ToString("N5");
+                txtbxOperations.Text = result.ToString("");
             }
             catch (Exception ex)
             {
